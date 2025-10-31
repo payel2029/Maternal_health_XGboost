@@ -1,15 +1,13 @@
+# app.py
 from fastapi import FastAPI
 from pydantic import BaseModel
 import joblib
 import numpy as np
-import shap
 
-app = FastAPI()
-
-# Load the trained XGBoost model
-model = joblib.load("xgb_adasyn_model.pkl")
-
-class ModelInput(BaseModel):
+# ------------------------
+# Define input schema
+# ------------------------
+class PatientData(BaseModel):
     Age: float
     SystolicBP: float
     DiastolicBP: float
@@ -17,34 +15,37 @@ class ModelInput(BaseModel):
     BodyTemp: float
     HeartRate: float
 
+# ------------------------
+# Initialize FastAPI
+# ------------------------
+app = FastAPI(title="Maternal Health Risk Prediction API")
+
+# ------------------------
+# Load the XGBoost model
+# ------------------------
+model = joblib.load("xgb_adasyn_model.pkl")
+
+# ------------------------
+# Home route
+# ------------------------
 @app.get("/")
-def root():
+def home():
     return {"message": "Maternal Health Risk Prediction API is running"}
 
+# ------------------------
+# Prediction route
+# ------------------------
 @app.post("/predict")
-def predict(data: ModelInput):
-    # Prepare input
-    features = np.array([[data.Age, data.SystolicBP, data.DiastolicBP,
-                          data.BS, data.BodyTemp, data.HeartRate]])
+def predict_risk(data: PatientData):
+    # Convert input to numpy array
+    X = np.array([[data.Age, data.SystolicBP, data.DiastolicBP,
+                   data.BS, data.BodyTemp, data.HeartRate]])
 
-    # Make prediction
-    prediction = int(model.predict(features)[0])
-
-    # Try generating explanation safely
-    explanation = {}
-    try:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(features)
-
-        feature_names = ["Age", "SystolicBP", "DiastolicBP", "BS", "BodyTemp", "HeartRate"]
-        # Handle multiclass shap output
-        if isinstance(shap_values, list):
-            shap_values = shap_values[prediction]
-        explanation = dict(zip(feature_names, shap_values[0].tolist()))
-    except Exception as e:
-        explanation = {"error": str(e)}
+    # Predict class
+    prediction = model.predict(X)[0]
+    prediction_proba = model.predict_proba(X)[0]
 
     return {
-        "prediction": prediction,
-        "explanation": explanation
+        "risk_class": int(prediction),
+        "probabilities": prediction_proba.tolist()
     }
