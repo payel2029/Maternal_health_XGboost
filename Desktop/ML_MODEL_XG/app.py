@@ -3,6 +3,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import joblib
 import numpy as np
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ------------------------
 # Define input schema
@@ -21,9 +25,25 @@ class PatientData(BaseModel):
 app = FastAPI(title="Maternal Health Risk Prediction API")
 
 # ------------------------
-# Load the XGBoost model
+# Load the XGBoost model and define class mapping
 # ------------------------
-model = joblib.load("xgb_adasyn_model.pkl")
+try:
+    model = joblib.load("xgb_adasyn_model.pkl")
+    logger.info("Model loaded successfully")
+    
+    # Define the class mapping based on typical label encoding
+    # Since we don't have the original classes_, we'll use the most common mapping
+    class_mapping = {
+        0: "low risk",
+        1: "mid risk", 
+        2: "high risk"
+    }
+    
+    logger.info(f"Using class mapping: {class_mapping}")
+        
+except Exception as e:
+    logger.error(f"Error loading model: {e}")
+    raise e
 
 # ------------------------
 # Home route
@@ -37,41 +57,20 @@ def home():
 # ------------------------
 @app.post("/predict")
 def predict_risk(data: PatientData):
-    import pandas as pd
-    import shap
+    # Convert input to numpy array
+    X = np.array([[data.Age, data.SystolicBP, data.DiastolicBP,
+                   data.BS, data.BodyTemp, data.HeartRate]])
 
-    # Convert input to DataFrame for model and SHAP
-    X = pd.DataFrame([{
-        "Age": data.Age,
-        "SystolicBP": data.SystolicBP,
-        "DiastolicBP": data.DiastolicBP,
-        "BS": data.BS,
-        "BodyTemp": data.BodyTemp,
-        "HeartRate": data.HeartRate
-    }])
-
-    # Predict class (numerical label)
-    prediction = int(model.predict(X)[0])
-    prediction_proba = model.predict_proba(X)[0].tolist()
-
-    # Map numeric class → text label
-    risk_labels = {0: "low risk", 1: "mid risk", 2: "high risk"}
-    risk_level = risk_labels.get(prediction, "unknown")
-
-    # Try SHAP explanation
-    try:
-        explainer = shap.Explainer(model)
-        shap_values = explainer(X)
-        explanation = dict(zip(X.columns, shap_values.values[0].tolist()))
-    except Exception as e:
-        explanation = {"note": "SHAP explanation unavailable", "error": str(e)}
+    # Predict class
+    prediction = model.predict(X)[0]
+    prediction_proba = model.predict_proba(X)[0]
+    
+    # Map to string label
+    risk_label = class_mapping.get(prediction, "unknown risk")
 
     return {
-        "prediction": risk_level,
-        "probabilities": {
-            "low": round(prediction_proba[0], 3),
-            "mid": round(prediction_proba[1], 3),
-            "high": round(prediction_proba[2], 3)
-        },
-        "explanation": explanation
+        "risk_class": int(prediction),
+        "risk_label": risk_label,  # This is the important addition!
+        "probabilities": prediction_proba.tolist(),
+        "class_mapping": class_mapping  # Send mapping to frontend for verification
     }
